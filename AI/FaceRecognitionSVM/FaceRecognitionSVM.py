@@ -12,8 +12,8 @@ import matplotlib.patches as patches
 import matplotlib.pyplot as plt
 
 # Tải dữ liệu từ các file .mat
-pos_samples = loadmat('possamples.mat')['possamples']  # Giả sử tên biến là 'positive_samples'
-neg_samples = loadmat('negsamples.mat')['negsamples']  # Giả sử tên biến là 'negative_samples'
+pos_samples = loadmat('possamples.mat')['possamples']
+neg_samples = loadmat('negsamples.mat')['negsamples']
 
 # Chuyển vị mảng để định dạng là (số_mẫu, chiều_cao, chiều_rộng)
 pos_samples_transposed = pos_samples.transpose(2, 0, 1)
@@ -116,10 +116,86 @@ for y in range(0, img.shape[0] - patch_size[1], step_size):
 
 
 # Áp dụng Non-maxima Suppression (NMS)
-def nms(detections, confthresh=0.5, nms_threshold=0.3):
-    # Cần một hàm NMS đầy đủ ở đây
-    # Ví dụ: một hàm NMS từ thư viện như `skimage.feature` hoặc tự viết
-    # ...
+def nms(detects, cfthresh, nms_threshold):
+    """
+    Thực hiện Non-Maxima Suppression (NMS) để lọc các hộp giới hạn chồng chéo.
+
+    Args:
+        detects (list): Một danh sách các dict, mỗi dict chứa 'box' (hộp giới hạn)
+                          và 'score' (điểm tin cậy).
+                          Ví dụ: [{'box': (x, y, w, h), 'score': confidence}, ...]
+        cfthresh (float): Ngưỡng tin cậy để tiền lọc các hộp giới hạn.
+        nms_threshold (float): Ngưỡng Intersection-over-Union (IoU) cho NMS.
+
+    Returns:
+        list: Danh sách các hộp giới hạn đã được lọc sau NMS.
+    """
+
+    # Tiền lọc các hộp giới hạn dựa trên ngưỡng tin cậy
+    detects = [d for d in detects if d['score'] > cfthresh]
+
+    # Nếu không có hộp nào vượt qua ngưỡng, trả về danh sách rỗng
+    if not detects:
+        return []
+
+    # Trích xuất hộp giới hạn và điểm tin cậy
+    boxes = np.array([d['box'] for d in detects])
+    scores = np.array([d['score'] for d in detects])
+
+    # Sắp xếp các hộp theo điểm tin cậy giảm dần
+    sorted_indices = np.argsort(scores)[::-1]
+    boxes = boxes[sorted_indices]
+    scores = scores[sorted_indices]
+
+    keep = []
+    while len(sorted_indices) > 0:
+        # Lấy chỉ số của hộp có điểm cao nhất
+        i = sorted_indices[0]
+        keep.append(i)
+
+        # Tính toán IoU (Intersection-over-Union) giữa hộp hiện tại và các hộp còn lại
+
+        # Tọa độ hộp hiện tại
+        x1_current, y1_current, w_current, h_current = boxes[i]
+
+        # Tọa độ các hộp còn lại
+        x1_remaining = boxes[sorted_indices[1:]][:, 0]
+        y1_remaining = boxes[sorted_indices[1:]][:, 1]
+        w_remaining = boxes[sorted_indices[1:]][:, 2]
+        h_remaining = boxes[sorted_indices[1:]][:, 3]
+
+        # Tọa độ góc dưới bên phải
+        x2_current = x1_current + w_current
+        y2_current = y1_current + h_current
+        x2_remaining = x1_remaining + w_remaining
+        y2_remaining = y1_remaining + h_remaining
+
+        # Tọa độ vùng giao nhau
+        x_overlap = np.maximum(x1_current, x1_remaining)
+        y_overlap = np.maximum(y1_current, y1_remaining)
+        x_end_overlap = np.minimum(x2_current, x2_remaining)
+        y_end_overlap = np.minimum(y2_current, y2_remaining)
+
+        # Tính diện tích vùng giao nhau
+        width_overlap = np.maximum(0, x_end_overlap - x_overlap)
+        height_overlap = np.maximum(0, y_end_overlap - y_overlap)
+        area_overlap = width_overlap * height_overlap
+
+        # Tính diện tích các hộp
+        area_current = w_current * h_current
+        area_remaining = w_remaining * h_remaining
+
+        # Tính IoU
+        union_area = area_current + area_remaining - area_overlap
+        iou = area_overlap / (union_area + 1e-6)  # Thêm 1e-6 để tránh chia cho 0
+
+        # Giữ lại các chỉ số của các hộp có IoU thấp hơn ngưỡng
+        remaining_indices = np.where(iou <= nms_threshold)[0]
+        sorted_indices = sorted_indices[remaining_indices + 1]
+
+    # Trả về các hộp giới hạn đã được lọc
+    final_detections = [detects[sorted_indices[i]] for i in keep]
+
     return final_detections
 
 
