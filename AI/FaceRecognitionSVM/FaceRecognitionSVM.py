@@ -1,214 +1,324 @@
 import numpy as np
+import matplotlib.pyplot as plt
 from scipy.io import loadmat
-from sklearn.model_selection import train_test_split
 from sklearn.svm import SVC
 from sklearn.metrics import accuracy_score
-import joblib
-from skimage import io, transform
-import matplotlib.pyplot as plt
-import matplotlib.patches as patches
+from sklearn.model_selection import train_test_split
+from PIL import Image
 
-# Sử dụng matplotlib để hiển thị W
-import matplotlib.pyplot as plt
+def auto_detect_and_load_data():
+    """Load .mat files with auto-detection """
+    try:
+        # Load positive samples
+        pos_array = loadmat('possamples.mat')['possamples']
 
-# Tải dữ liệu từ các file .mat
-pos_samples = loadmat('possamples.mat')['possamples']
-neg_samples = loadmat('negsamples.mat')['negsamples']
+        # Load negative samples
+        neg_array = loadmat('negsamples.mat')['negsamples']
 
-# Chuyển vị mảng để định dạng là (số_mẫu, chiều_cao, chiều_rộng)
-pos_samples_transposed = pos_samples.transpose(2, 0, 1)
-neg_samples_transposed = neg_samples.transpose(2, 0, 1)
+        print(f"Pos data shape: {pos_array.shape}")
+        print(f"Neg data shape: {neg_array.shape}")
 
-print("Kích thước sau khi chuyển vị của mẫu dương:", pos_samples_transposed.shape)
-print("Kích thước sau khi chuyển vị của mẫu âm:", neg_samples_transposed.shape)
+        # Auto-detect image size từ total elements
+        total_pos = pos_array.size
+        possible_sizes = [(48, 48), (64, 64), (32, 32), (36, 36)]
 
-# Làm phẳng hình ảnh thành vector
-X_pos = pos_samples_transposed.reshape(pos_samples_transposed.shape[0], -1)
-X_neg = neg_samples_transposed.reshape(neg_samples_transposed.shape[0], -1)
+        img_size = None
+        for h, w in possible_sizes:
+            if total_pos % (h * w) == 0:
+                n_images = total_pos // (h * w)
+                print(f"✅ {h}x{w} → {n_images} positive images")
+                img_size = (h, w)
+                break
 
-# Định nghĩa hàm chuẩn hóa trung bình-phương sai
-def normalize_data(data):
-    mean = np.mean(data, axis=0)
-    std = np.std(data, axis=0)
-    # Tránh chia cho 0
+        if img_size is None:
+            print("Cannot detect image size, using 48x48")
+            img_size = (48, 48)
+
+        # Reshape data
+        pixels_per_img = img_size[0] * img_size[1]
+        n_pos = pos_array.size // pixels_per_img
+        n_neg = neg_array.size // pixels_per_img
+
+        # Fix: Flatten and reshape correctly
+        pos_imgs = pos_array.flatten()[:n_pos * pixels_per_img].reshape(n_pos, img_size[0], img_size[1])
+        neg_imgs = neg_array.flatten()[:n_neg * pixels_per_img].reshape(n_neg, img_size[0], img_size[1])
+
+
+        # Normalize to [0,1]
+        pos_imgs = pos_imgs.astype(np.float32) / 255.0 if pos_imgs.max() > 1 else pos_imgs.astype(np.float32)
+        neg_imgs = neg_imgs.astype(np.float32) / 255.0 if neg_imgs.max() > 1 else neg_imgs.astype(np.float32)
+
+        print(f"Loaded {n_pos} positive + {n_neg} negative samples ({img_size})")
+        return pos_imgs, neg_imgs, img_size
+
+    except Exception as e:
+        print(f"Error: {e}")
+        print("Creating dummy data...")
+        return create_dummy_data()
+
+def create_dummy_data():
+    """Fallback dummy data"""
+    img_size = (48, 48)
+    n_pos, n_neg = 200, 200
+
+    pos_imgs = []
+    for i in range(n_pos):
+        img = np.random.rand(48, 48) * 0.3
+        # Add face pattern
+        center = 24
+        y, x = np.ogrid[:48, :48]
+        mask = ((x - center)**2 / 15**2 + (y - center)**2 / 18**2) <= 1
+        img[mask] += 0.4
+        # Eyes and mouth
+        img[18:21, 14:17] = img[18:21, 31:34] = 0.2  # Eyes
+        img[30:32, 20:28] = 0.3  # Mouth
+        pos_imgs.append(img)
+
+    neg_imgs = [np.random.rand(48, 48) for _ in range(n_neg)]
+    return np.array(pos_imgs), np.array(neg_imgs), img_size
+
+# Main pipeline
+def run_face_detection():
+    print("Face Detection Pipeline")
+    print("="*50)
+
+    # 1. Load data
+    pos_imgs, neg_imgs, img_size = auto_detect_and_load_data()
+
+    # 2. Prepare training data
+    X = np.concatenate([
+        pos_imgs.reshape(len(pos_imgs), -1),
+        neg_imgs.reshape(len(neg_imgs), -1)
+    ], axis=0)
+
+    y = np.concatenate([
+        np.ones(len(pos_imgs)),
+        np.zeros(len(neg_imgs))
+    ])
+
+    print(f"Training data: {X.shape}, Labels: {y.shape}")
+
+    # 3. Split and normalize
+    X_tr, X_val, y_tr, y_val = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+
+    mean, std = X_tr.mean(axis=0), X_tr.std(axis=0)
     std[std == 0] = 1
-    return (data - mean) / std
 
-# Chuẩn hóa dữ liệu đã làm phẳng
-X_pos_normalized = normalize_data(X_pos)
-X_neg_normalized = normalize_data(X_neg)
+    X_tr_norm = (X_tr - mean) / std
+    X_val_norm = (X_val - mean) / std
 
-# Tạo nhãn (1 cho khuôn mặt, 0 cho không phải khuôn mặt)
-y_pos = np.ones(X_pos_normalized.shape[0])
-y_neg = np.zeros(X_neg_normalized.shape[0])
+    # 4. Train SVM with different C values
+    print("\nTraining SVM...")
+    C_values = [0.001, 0.01, 0.1, 1, 10, 100]
+    best_acc, best_clf = 0, None
 
-# Kết hợp dữ liệu và nhãn
-X_combined = np.vstack((X_pos_normalized, X_neg_normalized))
-y_combined = np.hstack((y_pos, y_neg))
+    for C in C_values:
+        clf = SVC(kernel='linear', C=C, random_state=42).fit(X_tr_norm, y_tr)
+        acc = accuracy_score(y_val, clf.predict(X_val_norm))
+        print(f"C={C:<5} Val Acc={acc:.3f}")
+        if acc > best_acc:
+            best_acc, best_clf = acc, clf
 
-# Chia dữ liệu thành tập huấn luyện và tập xác thực (validation)
-X_train, X_val, y_train, y_val = train_test_split(X_combined, y_combined, test_size=0.2, random_state=42, stratify=y_combined)
+    # 5. Extract hyperplane
+    W = (best_clf.dual_coef_[0][:, None] * best_clf.support_vectors_).sum(axis=0)
+    b = best_clf.intercept_
 
-print("\nKích thước của X_train:", X_train.shape)
-print("Kích thước của X_val:", X_val.shape)
+    print(f"\nBest validation accuracy: {best_acc:.3f}")
 
-best_C = None
-best_accuracy = 0
-best_svm_model = None
-C_values = [0.001, 0.01, 0.1, 1, 10, 100]
+    # 6. Visualize hyperplane
+    plt.figure(figsize=(6, 6))
+    plt.imshow(W.reshape(img_size), cmap='RdBu_r')
+    plt.title('SVM Hyperplane (W) - Looks like average face!')
+    plt.colorbar()
+    plt.axis('off')
+    plt.show()
 
-for C in C_values:
-    # Huấn luyện SVM tuyến tính
-    svm_model = SVC(kernel='linear', C=C)
-    svm_model.fit(X_train, y_train)
+    return W, b, mean, std, img_size
 
-    # Đánh giá trên tập xác thực
-    y_pred_val = svm_model.predict(X_val)
-    accuracy = accuracy_score(y_val, y_pred_val)
+# 7. Face detection functions
+def detect_faces_in_image(image_path, W, b, mean, std, img_size, confidence_threshold=0.5, iou_threshold=0.3):
+    """Detect faces trong ảnh test"""
+    try:
+        # Load image
+        img = np.array(Image.open(image_path).convert('L')) / 255.0
+        h, w = img.shape
 
-    print(f"Giá trị C: {C}, Độ chính xác trên tập xác thực: {accuracy:.4f}")
-
-    if accuracy > best_accuracy:
-        best_accuracy = accuracy
-        best_C = C
-        best_svm_model = svm_model
-
-print(f"\nGiá trị C tốt nhất là: {best_C} với độ chính xác: {best_accuracy:.4f}")
-
-# Giả sử best_svm_model là mô hình SVM tốt nhất đã được huấn luyện => Save
-joblib.dump(best_svm_model, 'best_svm_model.pkl')
-
-# Trích xuất và trực quan hóa siêu mặt phẳng W
-# W là vector trọng số của SVM
-W = best_svm_model.coef_[0]
-# Định hình lại W thành kích thước hình ảnh gốc (24, 24)
-W_image = W.reshape(24, 24)
-
-plt.imshow(W_image, cmap='gray')
-plt.title(f"Visualizing W for C={best_C}")
-plt.savefig('W_visualization.png')
-
-# Tải mô hình từ tệp đã lưu
-loaded_svm_model = joblib.load('best_svm_model.pkl')
-# Tải ảnh kiểm tra (ví dụ: img1.jpg)
-img = io.imread('img1.jpg', as_gray=True)
-
-patch_size = (64, 64)
-step_size = 10  # Bước trượt
-
-detections = []
-# Vòng lặp quét cửa sổ trượt
-for y in range(0, img.shape[0] - patch_size[1], step_size):
-    for x in range(0, img.shape[1] - patch_size[0], step_size):
-        patch = img[y:y + patch_size[1], x:x + patch_size[0]]
-
-        # Làm phẳng và chuẩn hóa miếng vá
-        patch_flat = patch.flatten().reshape(1, -1)
-        # Sử dụng hàm normalize_data() từ Phần 1, nhưng phải cẩn thận với việc chuẩn hóa riêng biệt cho mỗi patch
-        # Một cách tốt hơn là chuẩn hóa toàn bộ ảnh và trích xuất patch đã chuẩn hóa
-        # Tuy nhiên, cách đơn giản hơn là chuẩn hóa cục bộ cho mỗi patch
-        patch_normalized = (patch_flat - np.mean(patch_flat)) / (np.std(patch_flat) + 1e-6)
-
-        # Lấy điểm tin cậy
-        confidence = loaded_svm_model.decision_function(patch_normalized)[0]
-
-        detections.append({'box': (x, y, patch_size[0], patch_size[1]), 'score': confidence})
+        detections = []
+        step = 8
+        win_h, win_w = img_size
 
 
-# Áp dụng Non-maxima Suppression (NMS)
-def nms(detects, cfthresh, nms_threshold):
-    """
-    Thực hiện Non-Maxima Suppression (NMS) để lọc các hộp giới hạn chồng chéo.
+        # Sliding window
+        for y in range(0, h - win_h + 1, step):
+            for x in range(0, w - win_w + 1, step):
+                patch = img[y:y+win_h, x:x+win_w]
+                if patch.shape == img_size:
+                    # Normalize and classify
+                    patch_norm = (patch.flatten() - mean) / std
+                    score = patch_norm.dot(W) + b
 
-    Args:
-        detects (list): Một danh sách các dict, mỗi dict chứa 'box' (hộp giới hạn)
-                          và 'score' (điểm tin cậy).
-                          Ví dụ: [{'box': (x, y, w, h), 'score': confidence}, ...]
-        cfthresh (float): Ngưỡng tin cậy để tiền lọc các hộp giới hạn.
-        nms_threshold (float): Ngưỡng Intersection-over-Union (IoU) cho NMS.
+                    if score > confidence_threshold:  # Use the confidence threshold
+                        detections.append({
+                            'x': x, 'y': y, 'w': win_w, 'h': win_h, 'score': score
+                        })
 
-    Returns:
-        list: Danh sách các hộp giới hạn đã được lọc sau NMS.
-    """
+        # Improved NMS (Non-Maximum Suppression)
+        def iou(box1, box2):
+            x_overlap = max(0, min(box1['x'] + box1['w'], box2['x'] + box2['w']) - max(box1['x'], box2['x']))
+            y_overlap = max(0, min(box1['y'] + box1['h'], box2['y'] + box2['h']) - max(box1['y'], box2['y']))
+            intersection = x_overlap * y_overlap
+            area1 = box1['w'] * box1['h']
+            area2 = box2['w'] * box2['h']
+            union = area1 + area2 - intersection
+            return intersection / union if union > 0 else 0
 
-    # Tiền lọc các hộp giới hạn dựa trên ngưỡng tin cậy
-    detects = [d for d in detects if d['score'] > cfthresh]
-
-    # Nếu không có hộp nào vượt qua ngưỡng, trả về danh sách rỗng
-    if not detects:
-        return []
-
-    # Trích xuất hộp giới hạn và điểm tin cậy
-    boxes = np.array([d['box'] for d in detects])
-    scores = np.array([d['score'] for d in detects])
-
-    # Sắp xếp các hộp theo điểm tin cậy giảm dần
-    sorted_indices = np.argsort(scores)[::-1]
-    boxes = boxes[sorted_indices]
-    scores = scores[sorted_indices]
-
-    keep = []
-    while len(sorted_indices) > 0:
-        # Lấy chỉ số của hộp có điểm cao nhất
-        i = sorted_indices[0]
-        keep.append(i)
-
-        # Tính toán IoU (Intersection-over-Union) giữa hộp hiện tại và các hộp còn lại
-
-        # Tọa độ hộp hiện tại
-        x1_current, y1_current, w_current, h_current = boxes[i]
-
-        # Tọa độ các hộp còn lại
-        x1_remaining = boxes[sorted_indices[1:]][:, 0]
-        y1_remaining = boxes[sorted_indices[1:]][:, 1]
-        w_remaining = boxes[sorted_indices[1:]][:, 2]
-        h_remaining = boxes[sorted_indices[1:]][:, 3]
-
-        # Tọa độ góc dưới bên phải
-        x2_current = x1_current + w_current
-        y2_current = y1_current + h_current
-        x2_remaining = x1_remaining + w_remaining
-        y2_remaining = y1_remaining + h_remaining
-
-        # Tọa độ vùng giao nhau
-        x_overlap = np.maximum(x1_current, x1_remaining)
-        y_overlap = np.maximum(y1_current, y1_remaining)
-        x_end_overlap = np.minimum(x2_current, x2_remaining)
-        y_end_overlap = np.minimum(y2_current, y2_remaining)
-
-        # Tính diện tích vùng giao nhau
-        width_overlap = np.maximum(0, x_end_overlap - x_overlap)
-        height_overlap = np.maximum(0, y_end_overlap - y_overlap)
-        area_overlap = width_overlap * height_overlap
-
-        # Tính diện tích các hộp
-        area_current = w_current * h_current
-        area_remaining = w_remaining * h_remaining
-
-        # Tính IoU
-        union_area = area_current + area_remaining - area_overlap
-        iou = area_overlap / (union_area + 1e-6)  # Thêm 1e-6 để tránh chia cho 0
-
-        # Giữ lại các chỉ số của các hộp có IoU thấp hơn ngưỡng
-        remaining_indices = np.where(iou <= nms_threshold)[0]
-        sorted_indices = sorted_indices[remaining_indices + 1]
-
-    # Trả về các hộp giới hạn đã được lọc
-    final_detections = [detects[sorted_indices[i]] for i in keep]
-
-    return final_detections
+        detections.sort(key=lambda d: d['score'], reverse=True)
+        final_detections = []
 
 
-# Thử nghiệm với các ngưỡng khác nhau
-confthresh = 0.8
-confthresh_nms = 0.3
-final_detections = nms([d for d in detections if d['score'] > confthresh], nms_threshold=confthresh_nms)
+        while detections:
+            best_det = detections.pop(0)
+            final_detections.append(best_det)
+            detections = [det for det in detections if iou(best_det, det) < iou_threshold]
 
-# Hiển thị kết quả
-fig, ax = plt.subplots(1)
-ax.imshow(img, cmap='gray')
-for det in final_detections:
-    box = det['box']
-    rect = patches.Rectangle((box[0], box[1]), box[2], box[3], linewidth=1, edgecolor='r', facecolor='none')
-    ax.add_patch(rect)
-plt.show()
+        # Visualize
+        plt.figure(figsize=(10, 8))
+        plt.imshow(img, cmap='gray')
+        for det in final_detections:
+            rect = plt.Rectangle((det['x'], det['y']), det['w'], det['h'],
+                               fill=False, color='red', linewidth=2)
+            plt.gca().add_patch(rect)
+        plt.title(f"{image_path}: {len(final_detections)} faces detected with confidence_threshold={confidence_threshold} and iou_threshold={iou_threshold}")
+        plt.axis('off')
+        plt.show()
+
+    except Exception as e:
+        print(f"Error processing {image_path}: {e}")
+
+# Run complete pipeline
+W, b, mean, std, img_size = run_face_detection()
+
+# Test trên 4 ảnh
+# ('img1.jpg', 0.0, 0.0),  # img1.jpg: cannot find any values of confidence_threshold and iou_threshold to match face detections
+# ('img2.jpg', 0.5, 0.3),  # img2.jpg: adjust confidence_threshold and iou_threshold
+# ('img3.jpg', 0.5, 0.3),  # img3.jpg: (.0,.1),(.1,.1),(.2,.1),(.3,.1),(.4,.1),(.5,.1),(.6,.1),(.7,.1),(.8,.1),(.9,.1)
+# ('img4.jpg', 0.5, 0.3),  # img4.jpg: cannot find any values of confidence_threshold and iou_threshold to match face detections
+# ('img5.jpg', 0.5, 0.3)   # img5.jpg: adjust confidence_threshold and iou_threshold
+test_images = [
+    ('img3.jpg', 0.0, 0.0),
+    ('img3.jpg', 0.0, 0.1),
+    ('img3.jpg', 0.0, 0.2),
+    ('img3.jpg', 0.0, 0.3),
+    ('img3.jpg', 0.0, 0.4),
+    ('img3.jpg', 0.0, 0.5),
+    ('img3.jpg', 0.0, 0.6),
+    ('img3.jpg', 0.0, 0.7),
+    ('img3.jpg', 0.0, 0.7),
+    ('img3.jpg', 0.0, 0.8),
+    ('img3.jpg', 0.0, 0.9),
+    ('img3.jpg', 0.1, 0.0),
+    ('img3.jpg', 0.1, 0.1),
+    ('img3.jpg', 0.1, 0.2),
+    ('img3.jpg', 0.1, 0.3),
+    ('img3.jpg', 0.1, 0.4),
+    ('img3.jpg', 0.1, 0.5),
+    ('img3.jpg', 0.1, 0.6),
+    ('img3.jpg', 0.1, 0.7),
+    ('img3.jpg', 0.1, 0.7),
+    ('img3.jpg', 0.1, 0.8),
+    ('img3.jpg', 0.1, 0.9),
+    ('img3.jpg', 0.2, 0.0),
+    ('img3.jpg', 0.2, 0.1),
+    ('img3.jpg', 0.2, 0.2),
+    ('img3.jpg', 0.2, 0.3),
+    ('img3.jpg', 0.2, 0.4),
+    ('img3.jpg', 0.2, 0.5),
+    ('img3.jpg', 0.2, 0.6),
+    ('img3.jpg', 0.2, 0.7),
+    ('img3.jpg', 0.2, 0.7),
+    ('img3.jpg', 0.2, 0.8),
+    ('img3.jpg', 0.2, 0.9),
+    ('img3.jpg', 0.3, 0.0),
+    ('img3.jpg', 0.3, 0.1),
+    ('img3.jpg', 0.3, 0.2),
+    ('img3.jpg', 0.3, 0.3),
+    ('img3.jpg', 0.3, 0.4),
+    ('img3.jpg', 0.3, 0.5),
+    ('img3.jpg', 0.3, 0.6),
+    ('img3.jpg', 0.3, 0.7),
+    ('img3.jpg', 0.3, 0.7),
+    ('img3.jpg', 0.3, 0.8),
+    ('img3.jpg', 0.3, 0.9),
+    ('img3.jpg', 0.4, 0.0),
+    ('img3.jpg', 0.4, 0.1),
+    ('img3.jpg', 0.4, 0.2),
+    ('img3.jpg', 0.4, 0.3),
+    ('img3.jpg', 0.4, 0.4),
+    ('img3.jpg', 0.4, 0.5),
+    ('img3.jpg', 0.4, 0.6),
+    ('img3.jpg', 0.4, 0.7),
+    ('img3.jpg', 0.4, 0.7),
+    ('img3.jpg', 0.4, 0.8),
+    ('img3.jpg', 0.4, 0.9),
+    ('img3.jpg', 0.5, 0.0),
+    ('img3.jpg', 0.5, 0.1),
+    ('img3.jpg', 0.5, 0.2),
+    ('img3.jpg', 0.5, 0.3),
+    ('img3.jpg', 0.5, 0.4),
+    ('img3.jpg', 0.5, 0.5),
+    ('img3.jpg', 0.5, 0.6),
+    ('img3.jpg', 0.5, 0.7),
+    ('img3.jpg', 0.5, 0.7),
+    ('img3.jpg', 0.5, 0.8),
+    ('img3.jpg', 0.5, 0.9),
+    ('img3.jpg', 0.6, 0.0),
+    ('img3.jpg', 0.6, 0.1),
+    ('img3.jpg', 0.6, 0.2),
+    ('img3.jpg', 0.6, 0.3),
+    ('img3.jpg', 0.6, 0.4),
+    ('img3.jpg', 0.6, 0.5),
+    ('img3.jpg', 0.6, 0.6),
+    ('img3.jpg', 0.6, 0.7),
+    ('img3.jpg', 0.6, 0.7),
+    ('img3.jpg', 0.6, 0.8),
+    ('img3.jpg', 0.6, 0.9),
+    ('img3.jpg', 0.7, 0.0),
+    ('img3.jpg', 0.7, 0.1),
+    ('img3.jpg', 0.7, 0.2),
+    ('img3.jpg', 0.7, 0.3),
+    ('img3.jpg', 0.7, 0.4),
+    ('img3.jpg', 0.7, 0.5),
+    ('img3.jpg', 0.7, 0.6),
+    ('img3.jpg', 0.7, 0.7),
+    ('img3.jpg', 0.7, 0.7),
+    ('img3.jpg', 0.7, 0.8),
+    ('img3.jpg', 0.7, 0.9),
+    ('img3.jpg', 0.8, 0.0),
+    ('img3.jpg', 0.8, 0.1),
+    ('img3.jpg', 0.8, 0.2),
+    ('img3.jpg', 0.8, 0.3),
+    ('img3.jpg', 0.8, 0.4),
+    ('img3.jpg', 0.8, 0.5),
+    ('img3.jpg', 0.8, 0.6),
+    ('img3.jpg', 0.8, 0.7),
+    ('img3.jpg', 0.8, 0.7),
+    ('img3.jpg', 0.8, 0.8),
+    ('img3.jpg', 0.8, 0.9),
+    ('img3.jpg', 0.9, 0.0),
+    ('img3.jpg', 0.9, 0.1),
+    ('img3.jpg', 0.9, 0.2),
+    ('img3.jpg', 0.9, 0.3),
+    ('img3.jpg', 0.9, 0.4),
+    ('img3.jpg', 0.9, 0.5),
+    ('img3.jpg', 0.9, 0.6),
+    ('img3.jpg', 0.9, 0.7),
+    ('img3.jpg', 0.9, 0.7),
+    ('img3.jpg', 0.9, 0.8),
+    ('img3.jpg', 0.9, 0.9)
+]
+
+print("\nTesting on images...")
+for img_path, conf_thresh, iou_thresh in test_images:
+    detect_faces_in_image(img_path, W, b, mean, std, img_size, confidence_threshold=conf_thresh, iou_threshold=iou_thresh)
+
+print("\nFace Detection completed!")
