@@ -199,8 +199,8 @@ def detect_faces_in_image(image_path, W, b, mean, std, img_size, confidence_thre
 W, b, mean, std, img_size = run_face_detection()
 
 # Test in 5 pictures to find the best confidence_threshold and iou_threshold
-# ('img1.jpg', 0.0, 0.0),  # img1.jpg: cannot find any values of confidence_threshold and iou_threshold to match face detections
-# ('img2.jpg', 0.5, 0.3),  # img2.jpg: adjust confidence_threshold and iou_threshold
+# ('img1.jpg', 0.0, 0.0),  # img1.jpg: (.0,.1),(.0,.2),(.0,.2),(.1,.1),(.1,.2),(.1,.3),....
+# ('img2.jpg', 0.5, 0.3),  # img2.jpg: (.0,.1),(.0,.2),(.0,.2),(.1,.1),(.1,.2),(.1,.3),....
 # ('img3.jpg', 0.5, 0.3),  # img3.jpg: (.0,.1),(.1,.1),(.2,.1),(.3,.1),(.4,.1),(.5,.1),(.6,.1),(.7,.1),(.8,.1),(.9,.1)
 # ('img4.jpg', 0.5, 0.3),  # img4.jpg: iou_threshold > 0.5
 # ('img5.jpg', 0.5, 0.3)   # img5.jpg: confidence_threshold and iou_threshold
