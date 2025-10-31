@@ -8,7 +8,7 @@ $db = $database->getConnection();
 $error = "";
 $success = "";
 
-// Lấy danh sách tuyến đường và xe khách
+// Lấy danh sách tuyến đường, xe khách và tài xế
 try {
     $query_tuyen = "SELECT * FROM tuyen_duong ORDER BY MaTuyenDuong";
     $stmt_tuyen = $db->prepare($query_tuyen);
@@ -23,70 +23,91 @@ try {
     $stmt_xe = $db->prepare($query_xe);
     $stmt_xe->execute();
     $xe_khach_list = $stmt_xe->fetchAll(PDO::FETCH_ASSOC);
-} catch(PDOException $e) {
+
+    // Lấy danh sách tài xế available
+    $query_tai_xe = "SELECT * FROM tai_xe ORDER BY HoTen";
+    $stmt_tai_xe = $db->prepare($query_tai_xe);
+    $stmt_tai_xe->execute();
+    $tai_xe_list = $stmt_tai_xe->fetchAll(PDO::FETCH_ASSOC);
+
+} catch (PDOException $e) {
     $error = "Lỗi khi lấy dữ liệu: " . $e->getMessage();
 }
 
 if ($_POST && !$error) {
-    $ma_chuyen_xe = trim(strtoupper($_POST['ma_chuyen_xe']));
     $ma_xe = trim($_POST['ma_xe']);
     $ma_tuyen_duong = trim($_POST['ma_tuyen_duong']);
     $gio_di = $_POST['gio_di'];
     $gio_den = $_POST['gio_den'];
-    $trang_thai = intval($_POST['trang_thai']);
+    $trang_thai = 1;
+    $tai_xe_chinh = trim($_POST['tai_xe_chinh']);
+    $lai_phu = trim($_POST['lai_phu']);
 
     // Validation
-    if (empty($ma_chuyen_xe) || empty($ma_xe) || empty($ma_tuyen_duong) || empty($gio_di) || empty($gio_den)) {
-        $error = "Vui lòng điền đầy đủ thông tin!";
+    if (empty($ma_xe) || empty($ma_tuyen_duong) || empty($gio_di) || empty($gio_den) || empty($tai_xe_chinh)) {
+        $error = "Vui lòng điền đầy đủ thông tin bắt buộc! (Tài xế chính là bắt buộc)";
+    } elseif ($tai_xe_chinh == $lai_phu && !empty($lai_phu)) {
+        $error = "Tài xế chính và lái phụ không thể là cùng một người!";
     } elseif (strtotime($gio_di) <= time()) {
         $error = "Giờ khởi hành phải sau thời điểm hiện tại!";
     } elseif (strtotime($gio_den) <= strtotime($gio_di)) {
         $error = "Giờ đến phải sau giờ khởi hành!";
     } else {
-        // Kiểm tra thời gian hợp lý (ít nhất 1 giờ, không quá 24 giờ)
-        $duration_hours = (strtotime($gio_den) - strtotime($gio_di)) / 3600;
-        if ($duration_hours < 1) {
-            $error = "Thời gian di chuyển phải ít nhất 1 giờ!";
-        } elseif ($duration_hours > 24) {
-            $error = "Thời gian di chuyển không được quá 24 giờ!";
-        } else {
-            try {
-                // Kiểm tra trùng mã chuyến xe
-                $check_query = "SELECT COUNT(*) FROM chuyen_xe WHERE MaChuyenXe = ?";
-                $check_stmt = $db->prepare($check_query);
-                $check_stmt->execute([$ma_chuyen_xe]);
+        try {
+            $db->beginTransaction();
 
-                if ($check_stmt->fetchColumn() > 0) {
-                    $error = "Mã chuyến xe đã tồn tại!";
-                } else {
-                    // Kiểm tra xung đột lịch trình xe
-                    $conflict_query = "SELECT COUNT(*) FROM chuyen_xe 
-                                      WHERE MaXe = ? AND TrangThai = 1
-                                      AND (
-                                          (GioDi <= ? AND GioDen >= ?) OR
-                                          (GioDi <= ? AND GioDen >= ?) OR
-                                          (GioDi >= ? AND GioDen <= ?)
-                                      )";
-                    $conflict_stmt = $db->prepare($conflict_query);
-                    $conflict_stmt->execute([$ma_xe, $gio_di, $gio_di, $gio_den, $gio_den, $gio_di, $gio_den]);
+            // 1. Tạo chuyến xe (trigger sẽ tự động tạo MaChuyenXe)
+            $query = "INSERT INTO chuyen_xe (MaTuyenDuong, MaXe, GioDi, GioDen, TrangThai) VALUES (?, ?, ?, ?, ?)";
+            $stmt = $db->prepare($query);
+            $stmt->execute([$ma_tuyen_duong, $ma_xe, $gio_di, $gio_den, $trang_thai]);
 
-                    if ($conflict_stmt->fetchColumn() > 0) {
-                        $error = "Xe này đã có lịch trình trùng với thời gian đã chọn!";
-                    } else {
-                        $query = "INSERT INTO chuyen_xe (MaChuyenXe, MaXe, MaTuyenDuong, GioDi, GioDen, TrangThai) VALUES (?, ?, ?, ?, ?, ?)";
-                        $stmt = $db->prepare($query);
+            // Lấy MaChuyenXe vừa được tạo tự động
+            $query_get_id = "SELECT MaChuyenXe FROM chuyen_xe WHERE MaTuyenDuong = ? AND MaXe = ? AND GioDi = ? ORDER BY MaChuyenXe DESC LIMIT 1";
+            $stmt_get_id = $db->prepare($query_get_id);
+            $stmt_get_id->execute([$ma_tuyen_duong, $ma_xe, $gio_di]);
+            $ma_chuyen_xe = $stmt_get_id->fetchColumn();
 
-                        if ($stmt->execute([$ma_chuyen_xe, $ma_xe, $ma_tuyen_duong, $gio_di, $gio_den, $trang_thai])) {
-                            $success = "Tạo chuyến xe thành công!";
-                            $_POST = array();
-                        } else {
-                            $error = "Có lỗi xảy ra khi tạo chuyến xe!";
-                        }
-                    }
-                }
-            } catch(PDOException $e) {
-                $error = "Lỗi: " . $e->getMessage();
+            if (!$ma_chuyen_xe) {
+                throw new Exception("Không thể tạo chuyến xe!");
             }
+
+            // 2. Kiểm tra xung đột lịch trình tài xế
+            $conflict_query = "SELECT COUNT(*) FROM phan_cong pc
+                              LEFT JOIN chuyen_xe cx ON pc.MaChuyenXe = cx.MaChuyenXe
+                              WHERE pc.MaTaiXe IN (?, ?) AND cx.TrangThai = 1
+                              AND (
+                                  (cx.GioDi <= ? AND cx.GioDen >= ?) OR
+                                  (cx.GioDi <= ? AND cx.GioDen >= ?) OR
+                                  (cx.GioDi >= ? AND cx.GioDen <= ?)
+                              )";
+            $params = [$tai_xe_chinh, $lai_phu ?: $tai_xe_chinh, $gio_di, $gio_di, $gio_den, $gio_den, $gio_di, $gio_den];
+            $conflict_stmt = $db->prepare($conflict_query);
+            $conflict_stmt->execute($params);
+
+            if ($conflict_stmt->fetchColumn() > 0) {
+                throw new Exception("Tài xế đã có lịch trình trùng với thời gian này!");
+            }
+
+            // 3. Thêm phân công tài xế chính
+            $query_pc = "INSERT INTO phan_cong (MaChuyenXe, MaTaiXe, VaiTro, ThuLao) VALUES (?, ?, 1, 0)";
+            $stmt_pc = $db->prepare($query_pc);
+            $stmt_pc->execute([$ma_chuyen_xe, $tai_xe_chinh]);
+
+            // 4. Thêm lái phụ nếu có
+            if (!empty($lai_phu)) {
+                $stmt_pc->execute([$ma_chuyen_xe, $lai_phu, 2]);
+            }
+
+            $db->commit();
+            $success = "Tạo chuyến xe và phân công tài xế thành công! Mã chuyến xe: " . $ma_chuyen_xe;
+            $_POST = array();
+
+        } catch (Exception $e) {
+            $db->rollBack();
+            $error = "Lỗi: " . $e->getMessage();
+        } catch (PDOException $e) {
+            $db->rollBack();
+            $error = "Lỗi database: " . $e->getMessage();
         }
     }
 }
@@ -100,7 +121,7 @@ include '../includes/header.php';
             <div class="card-header">
                 <h4 class="mb-0">
                     <i class="fas fa-plus-circle text-primary me-2"></i>
-                    Tạo chuyến xe mới
+                    Tạo chuyến xe và phân công tài xế
                 </h4>
             </div>
             <div class="card-body">
@@ -130,117 +151,142 @@ include '../includes/header.php';
 
                 <!-- Form -->
                 <form method="POST" class="needs-validation" novalidate>
-                    <div class="row">
-                        <div class="col-md-6 mb-3">
-                            <label class="form-label">
-                                <i class="fas fa-id-card me-1"></i>Mã chuyến xe <span class="text-danger">*</span>
-                            </label>
-                            <input type="text"
-                                   class="form-control"
-                                   name="ma_chuyen_xe"
-                                   value="<?php echo isset($_POST['ma_chuyen_xe']) ? htmlspecialchars($_POST['ma_chuyen_xe']) : 'CX' . date('YmdHi'); ?>"
-                                   placeholder="VD: CX202501010800"
-                                   style="text-transform: uppercase;"
-                                   maxlength="20"
-                                   required>
-                            <div class="form-text">Mã tự động dựa trên thời gian</div>
-                            <div class="invalid-feedback">Vui lòng nhập mã chuyến xe</div>
+                    <!-- Thông tin chuyến xe -->
+                    <div class="card mb-4">
+                        <div class="card-header bg-primary text-black">
+                            <h6 class="mb-0"><i class="fas fa-route me-2"></i>Thông tin chuyến xe</h6>
                         </div>
+                        <div class="card-body">
+                            <div class="row">
+                                <div class="col-md-6 mb-3">
+                                    <label class="form-label">
+                                        <i class="fas fa-route me-1"></i>Tuyến đường <span class="text-danger">*</span>
+                                    </label>
+                                    <select class="form-select" name="ma_tuyen_duong" id="tuyen-select" required>
+                                        <option value="">-- Chọn tuyến đường --</option>
+                                        <?php foreach ($tuyen_duong_list as $tuyen): ?>
+                                            <option value="<?php echo $tuyen['MaTuyenDuong']; ?>"
+                                                    data-distance="<?php echo $tuyen['DoDai']; ?>"
+                                                    data-complexity="<?php echo $tuyen['DoPhucTap']; ?>"
+                                                    <?php echo (isset($_POST['ma_tuyen_duong']) && $_POST['ma_tuyen_duong'] == $tuyen['MaTuyenDuong']) ? 'selected' : ''; ?>>
+                                                <?php echo htmlspecialchars($tuyen['MaTuyenDuong'] . ' - ' . $tuyen['DiemDau'] . ' → ' . $tuyen['DiemCuoi'] . ' (' . $tuyen['DoDai'] . 'km)'); ?>
+                                            </option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                    <div class="invalid-feedback">Vui lòng chọn tuyến đường</div>
+                                </div>
 
-                        <div class="col-md-6 mb-3">
-                            <label class="form-label">
-                                <i class="fas fa-toggle-on me-1"></i>Trạng thái <span class="text-danger">*</span>
-                            </label>
-                            <select class="form-select" name="trang_thai" required>
-                                <option value="">-- Chọn trạng thái --</option>
-                                <option value="1" <?php echo (isset($_POST['trang_thai']) && $_POST['trang_thai'] == '1') ? 'selected' : 'selected'; ?>>
-                                    Chờ khởi hành
-                                </option>
-                                <option value="2" <?php echo (isset($_POST['trang_thai']) && $_POST['trang_thai'] == '2') ? 'selected' : ''; ?>>
-                                    Hoàn thành
-                                </option>
-                            </select>
-                            <div class="invalid-feedback">Vui lòng chọn trạng thái</div>
-                        </div>
-                    </div>
+                                <div class="col-md-6 mb-3">
+                                    <label class="form-label">
+                                        <i class="fas fa-bus me-1"></i>Xe khách <span class="text-danger">*</span>
+                                    </label>
+                                    <select class="form-select" name="ma_xe" required>
+                                        <option value="">-- Chọn xe khách --</option>
+                                        <?php foreach ($xe_khach_list as $xe): ?>
+                                            <option value="<?php echo $xe['MaXe']; ?>"
+                                                    <?php echo (isset($_POST['ma_xe']) && $_POST['ma_xe'] == $xe['MaXe']) ? 'selected' : ''; ?>>
+                                                <?php echo htmlspecialchars($xe['MaXe'] . ' - ' . $xe['TenLoaiXe'] . ' (' . $xe['SoGhe'] . ' ghế)'); ?>
+                                            </option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                    <div class="invalid-feedback">Vui lòng chọn xe khách</div>
+                                </div>
+                            </div>
 
-                    <div class="row">
-                        <div class="col-md-6 mb-3">
-                            <label class="form-label">
-                                <i class="fas fa-route me-1"></i>Tuyến đường <span class="text-danger">*</span>
-                            </label>
-                            <select class="form-select" name="ma_tuyen_duong" id="tuyen-select" required>
-                                <option value="">-- Chọn tuyến đường --</option>
-                                <?php foreach ($tuyen_duong_list as $tuyen): ?>
-                                    <option value="<?php echo $tuyen['MaTuyenDuong']; ?>"
-                                            data-distance="<?php echo $tuyen['DoDai']; ?>"
-                                            data-complexity="<?php echo $tuyen['DoPhucTap']; ?>"
-                                        <?php echo (isset($_POST['ma_tuyen_duong']) && $_POST['ma_tuyen_duong'] == $tuyen['MaTuyenDuong']) ? 'selected' : ''; ?>>
-                                        <?php echo htmlspecialchars($tuyen['MaTuyenDuong'] . ' - ' . $tuyen['DiemDau'] . ' → ' . $tuyen['DiemCuoi'] . ' (' . $tuyen['DoDai'] . 'km)'); ?>
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
-                            <div class="invalid-feedback">Vui lòng chọn tuyến đường</div>
-                        </div>
+                            <div class="row">
+                                <div class="col-md-4 mb-3">
+                                    <label class="form-label">
+                                        <i class="fas fa-play me-1 text-success"></i>Giờ khởi hành <span
+                                                class="text-danger">*</span>
+                                    </label>
+                                    <input type="datetime-local"
+                                           class="form-control"
+                                           name="gio_di"
+                                           id="gio-di"
+                                           value="<?php echo isset($_POST['gio_di']) ? $_POST['gio_di'] : date('Y-m-d\TH:i', strtotime('+2 hours')); ?>"
+                                           min="<?php echo date('Y-m-d\TH:i'); ?>"
+                                           required>
+                                    <div class="invalid-feedback">Vui lòng chọn giờ khởi hành</div>
+                                </div>
 
-                        <div class="col-md-6 mb-3">
-                            <label class="form-label">
-                                <i class="fas fa-bus me-1"></i>Xe khách <span class="text-danger">*</span>
-                            </label>
-                            <select class="form-select" name="ma_xe" required>
-                                <option value="">-- Chọn xe khách --</option>
-                                <?php foreach ($xe_khach_list as $xe): ?>
-                                    <option value="<?php echo $xe['MaXe']; ?>"
-                                        <?php echo (isset($_POST['ma_xe']) && $_POST['ma_xe'] == $xe['MaXe']) ? 'selected' : ''; ?>>
-                                        <?php echo htmlspecialchars($xe['MaXe'] . ' - ' . $xe['TenLoaiXe'] . ' (' . $xe['SoGhe'] . ' ghế)'); ?>
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
-                            <div class="invalid-feedback">Vui lòng chọn xe khách</div>
-                        </div>
-                    </div>
+                                <div class="col-md-4 mb-3">
+                                    <label class="form-label">
+                                        <i class="fas fa-stop me-1 text-danger"></i>Giờ đến dự kiến <span
+                                                class="text-danger">*</span>
+                                    </label>
+                                    <input type="datetime-local"
+                                           class="form-control"
+                                           name="gio_den"
+                                           id="gio-den"
+                                           value="<?php echo isset($_POST['gio_den']) ? $_POST['gio_den'] : ''; ?>"
+                                           required>
+                                    <div class="form-text">Sẽ tự động tính dựa trên tuyến đường</div>
+                                    <div class="invalid-feedback">Vui lòng chọn giờ đến</div>
+                                </div>
 
-                    <div class="row">
-                        <div class="col-md-6 mb-3">
-                            <label class="form-label">
-                                <i class="fas fa-play me-1 text-success"></i>Giờ khởi hành <span class="text-danger">*</span>
-                            </label>
-                            <input type="datetime-local"
-                                   class="form-control"
-                                   name="gio_di"
-                                   id="gio-di"
-                                   value="<?php echo isset($_POST['gio_di']) ? $_POST['gio_di'] : date('Y-m-d\TH:i', strtotime('+2 hours')); ?>"
-                                   min="<?php echo date('Y-m-d\TH:i'); ?>"
-                                   required>
-                            <div class="invalid-feedback">Vui lòng chọn giờ khởi hành</div>
-                        </div>
-
-                        <div class="col-md-6 mb-3">
-                            <label class="form-label">
-                                <i class="fas fa-stop me-1 text-danger"></i>Giờ đến dự kiến <span class="text-danger">*</span>
-                            </label>
-                            <input type="datetime-local"
-                                   class="form-control"
-                                   name="gio_den"
-                                   id="gio-den"
-                                   value="<?php echo isset($_POST['gio_den']) ? $_POST['gio_den'] : ''; ?>"
-                                   required>
-                            <div class="form-text">Sẽ tự động tính dựa trên tuyến đường</div>
-                            <div class="invalid-feedback">Vui lòng chọn giờ đến</div>
+                                <div class="col-md-4 mb-3">
+                                    <label class="form-label">
+                                        <i class="fas fa-toggle-on me-1"></i>Trạng thái <span
+                                                class="text-danger">*</span>
+                                    </label>
+                                    <select class="form-select" name="trang_thai" required>
+                                        <option value="1" <?php echo (isset($_POST['trang_thai']) && $_POST['trang_thai'] == '1') ? 'selected' : 'selected'; ?>>
+                                            Chờ khởi hành
+                                        </option>
+                                    </select>
+                                    <div class="invalid-feedback">Vui lòng chọn trạng thái</div>
+                                </div>
+                            </div>
                         </div>
                     </div>
 
-                    <!-- Thông tin ước tính -->
-                    <div class="mb-4">
-                        <div class="card bg-light">
-                            <div class="card-body">
-                                <h6 class="card-title text-info">
-                                    <i class="fas fa-calculator me-2"></i>Thông tin ước tính
-                                </h6>
-                                <div class="row" id="estimate-info">
-                                    <div class="col-12">
-                                        <small class="text-muted">Chọn tuyến đường để xem thông tin ước tính</small>
-                                    </div>
+                    <!-- Phân công tài xế -->
+                    <div class="card mb-4">
+                        <div class="card-header bg-success text-black">
+                            <h6 class="mb-0"><i class="fas fa-users me-2"></i>Phân công tài xế</h6>
+                        </div>
+                        <div class="card-body">
+                            <div class="row">
+                                <div class="col-md-6 mb-3">
+                                    <label class="form-label">
+                                        <i class="fas fa-user-tie me-1"></i>Tài xế chính <span
+                                                class="text-danger">*</span>
+                                    </label>
+                                    <select class="form-select" name="tai_xe_chinh" id="tai-xe-chinh" required>
+                                        <option value="">-- Chọn tài xế chính --</option>
+                                        <?php foreach ($tai_xe_list as $tai_xe): ?>
+                                            <option value="<?php echo $tai_xe['MaTaiXe']; ?>"
+                                                    <?php echo (isset($_POST['tai_xe_chinh']) && $_POST['tai_xe_chinh'] == $tai_xe['MaTaiXe']) ? 'selected' : ''; ?>>
+                                                <?php echo htmlspecialchars($tai_xe['MaTaiXe'] . ' - ' . $tai_xe['HoTen'] . ' (' . $tai_xe['SDT'] . ')'); ?>
+                                            </option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                    <div class="invalid-feedback">Vui lòng chọn tài xế chính</div>
+                                </div>
+
+                                <div class="col-md-6 mb-3">
+                                    <label class="form-label">
+                                        <i class="fas fa-user-friends me-1"></i>Lái phụ<span
+                                                class="text-danger">*</span>
+                                    </label>
+                                    <select class="form-select" name="lai_phu" id="lai-phu" required>
+                                        <option value="">-- Không có lái phụ --</option>
+                                        <?php foreach ($tai_xe_list as $tai_xe): ?>
+                                            <option value="<?php echo $tai_xe['MaTaiXe']; ?>"
+                                                    <?php echo (isset($_POST['lai_phu']) && $_POST['lai_phu'] == $tai_xe['MaTaiXe']) ? 'selected' : ''; ?>>
+                                                <?php echo htmlspecialchars($tai_xe['MaTaiXe'] . ' - ' . $tai_xe['HoTen'] . ' (' . $tai_xe['SDT'] . ')'); ?>
+                                            </option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                    <div class="form-text">Vui lòng chọn lái phụ</div>
+                                </div>
+                            </div>
+
+                            <!-- Thông tin thù lao -->
+                            <div class="alert alert-info">
+                                <h6><i class="fas fa-info-circle me-2"></i>Thông tin thù lao</h6>
+                                <div id="salary-preview">
+                                    <small class="text-muted">Chọn tuyến đường để xem ước tính thù lao</small>
                                 </div>
                             </div>
                         </div>
@@ -249,15 +295,17 @@ include '../includes/header.php';
                     <!-- Hướng dẫn -->
                     <div class="mb-4">
                         <div class="card border-info">
-                            <div class="card-header bg-info text-white">
-                                <h6 class="mb-0"><i class="fas fa-info-circle me-2"></i>Hướng dẫn lập lịch</h6>
+                            <div class="card-header bg-info text-black">
+                                <h6 class="mb-0"><i class="fas fa-info-circle me-2"></i>Hướng dẫn tính thù lao</h6>
                             </div>
                             <div class="card-body">
                                 <ul class="mb-0 small">
-                                    <li>Chọn tuyến đường trước để hệ thống ước tính thời gian di chuyển</li>
-                                    <li>Đảm bảo xe khách đã qua bảo dưỡng và còn hạn đăng kiểm</li>
-                                    <li>Thời gian khởi hành phải ít nhất 2 giờ từ thời điểm hiện tại</li>
-                                    <li>Sau khi tạo chuyến xe, nhớ phân công tài xế trước giờ khởi hành</li>
+                                    <li><strong>Công thức:</strong> Lương = Lương_cơ_bản × Hệ_số_vai_trò × Hệ_số_khoảng_cách × Hệ_số_độ_khó</li>
+                                    <li><strong>Lương cơ bản:</strong> 100,000đ</li>
+                                    <li><strong>Hệ số vai trò:</strong> Tài xế chính ×1.5, Lái phụ ×1.0</li>
+                                    <li><strong>Hệ số khoảng cách:</strong> (1 + độ_dài_km / 100)</li>
+                                    <li><strong>Hệ số độ khó:</strong> (1 + độ_phức_tạp / 10)</li>
+                                    <li><strong>Ví dụ:</strong> Tuyến 200km độ khó 2: Tài xế chính = 100k × 1.5 × 3.0 × 1.2 = 540,000đ</li>
                                 </ul>
                             </div>
                         </div>
@@ -282,14 +330,33 @@ include '../includes/header.php';
 </div>
 
 <script>
-    // Tự động tính giờ đến dựa trên tuyến đường và giờ đi
-    document.getElementById('tuyen-select').addEventListener('change', function() {
+    // Tự động tính giờ đến và ước tính thù lao
+    document.getElementById('tuyen-select').addEventListener('change', function () {
         calculateEstimatedArrival();
-        updateEstimateInfo();
+        updateSalaryPreview();
     });
 
-    document.getElementById('gio-di').addEventListener('change', function() {
+    document.getElementById('gio-di').addEventListener('change', function () {
         calculateEstimatedArrival();
+        updateSalaryPreview();
+    });
+
+    // Ngăn chọn cùng tài xế cho 2 vai trò
+    document.getElementById('tai-xe-chinh').addEventListener('change', function () {
+        const laiPhuSelect = document.getElementById('lai-phu');
+        const selectedValue = this.value;
+
+        // Disable option đã chọn cho tài xế chính
+        Array.from(laiPhuSelect.options).forEach(option => {
+            if (option.value === selectedValue && option.value !== '') {
+                option.disabled = true;
+                if (laiPhuSelect.value === selectedValue) {
+                    laiPhuSelect.value = '';
+                }
+            } else {
+                option.disabled = false;
+            }
+        });
     });
 
     function calculateEstimatedArrival() {
@@ -303,86 +370,89 @@ include '../includes/header.php';
         const departureTime = gioDiInput.value;
 
         if (distance && complexity && departureTime) {
-            // Tính tốc độ trung bình dựa trên độ phức tạp
             let averageSpeed;
-            switch(complexity) {
-                case 1: averageSpeed = 60; break; // Đơn giản
-                case 2: averageSpeed = 50; break; // Trung bình
-                case 3: averageSpeed = 40; break; // Phức tạp
-                default: averageSpeed = 50; break;
+            switch (complexity) {
+                case 1:
+                    averageSpeed = 60;
+                    break; // Đơn giản
+                case 2:
+                    averageSpeed = 50;
+                    break; // Trung bình
+                case 3:
+                    averageSpeed = 40;
+                    break; // Phức tạp
+                default:
+                    averageSpeed = 50;
+                    break;
             }
 
-            // Tính thời gian di chuyển (giờ)
             const travelTime = distance / averageSpeed;
-
-            // Cộng thêm thời gian nghỉ (15 phút mỗi 100km)
-            const restTime = Math.floor(distance / 100) * 0.25;
-
+            const restTime = Math.floor(distance / 100) * 0.25; // 15 phút mỗi 100km
             const totalTime = travelTime + restTime;
 
-            // Tính giờ đến
             const departureDate = new Date(departureTime);
             const arrivalDate = new Date(departureDate.getTime() + totalTime * 60 * 60 * 1000);
 
-            // Format datetime-local
             const arrivalString = arrivalDate.toISOString().slice(0, 16);
             gioDenInput.value = arrivalString;
         }
     }
 
-    function updateEstimateInfo() {
+    function updateSalaryPreview() {
         const tuyenSelect = document.getElementById('tuyen-select');
+        const salaryPreview = document.getElementById('salary-preview');
+
         const selectedOption = tuyenSelect.options[tuyenSelect.selectedIndex];
         const distance = parseFloat(selectedOption.getAttribute('data-distance'));
         const complexity = parseInt(selectedOption.getAttribute('data-complexity'));
-        const estimateInfo = document.getElementById('estimate-info');
 
         if (distance && complexity) {
-            let averageSpeed;
-            let complexityText;
-            switch(complexity) {
-                case 1:
-                    averageSpeed = 60;
-                    complexityText = 'Đơn giản (60km/h)';
-                    break;
-                case 2:
-                    averageSpeed = 50;
-                    complexityText = 'Trung bình (50km/h)';
-                    break;
-                case 3:
-                    averageSpeed = 40;
-                    complexityText = 'Phức tạp (40km/h)';
-                    break;
-            }
+            const luongCoBan = 100000;
 
-            const travelTime = distance / averageSpeed;
-            const restTime = Math.floor(distance / 100) * 0.25;
-            const totalTime = travelTime + restTime;
+            // Tính theo công thức mới
+            const heSoKhoangCach = 1 + (distance / 100.0);
+            const heSoDoPhucTap = 1 + (complexity / 10.0);
 
-            const hours = Math.floor(totalTime);
-            const minutes = Math.round((totalTime - hours) * 60);
+            // Tài xế chính (x1.5) và lái phụ (x1.0)
+            const mainDriverSalary = luongCoBan * 1.5 * heSoKhoangCach * heSoDoPhucTap;
+            const assistantSalary = luongCoBan * 1.0 * heSoKhoangCach * heSoDoPhucTap;
 
-            estimateInfo.innerHTML = `
-            <div class="col-md-4">
-                <strong>Khoảng cách:</strong><br>
-                <span class="text-primary">${distance.toLocaleString('vi-VN')} km</span>
+            // Tên độ phức tạp
+            const complexityNames = {
+                1: 'Đơn giản',
+                2: 'Trung bình',
+                3: 'Phức tạp'
+            };
+
+            salaryPreview.innerHTML = `
+            <div class="row">
+                <div class="col-md-6">
+                    <strong class="text-success">Tài xế chính:</strong> ${Math.round(mainDriverSalary).toLocaleString('vi-VN')}đ
+                    <br><small class="text-muted">100,000 × 1.5 × ${heSoKhoangCach.toFixed(2)} × ${heSoDoPhucTap.toFixed(1)}</small>
+                </div>
+                <div class="col-md-6">
+                    <strong class="text-info">Lái phụ:</strong> ${Math.round(assistantSalary).toLocaleString('vi-VN')}đ
+                    <br><small class="text-muted">100,000 × 1.0 × ${heSoKhoangCach.toFixed(2)} × ${heSoDoPhucTap.toFixed(1)}</small>
+                </div>
             </div>
-            <div class="col-md-4">
-                <strong>Độ phức tạp:</strong><br>
-                <span class="text-info">${complexityText}</span>
-            </div>
-            <div class="col-md-4">
-                <strong>Thời gian ước tính:</strong><br>
-                <span class="text-success">${hours}h ${minutes}p</span>
+            <div class="row mt-2">
+                <div class="col-12">
+                    <small class="text-muted">
+                        <strong>Chi tiết:</strong>
+                        Lương CB: 100,000đ |
+                        Khoảng cách: ${distance}km (×${heSoKhoangCach.toFixed(2)}) |
+                        Độ khó: ${complexityNames[complexity] || 'N/A'} (×${heSoDoPhucTap.toFixed(1)})
+                    </small>
+                </div>
             </div>
         `;
         } else {
-            estimateInfo.innerHTML = '<div class="col-12"><small class="text-muted">Chọn tuyến đường để xem thông tin ước tính</small></div>';
+            salaryPreview.innerHTML = '<small class="text-muted">Chọn tuyến đường để xem ước tính thù lao</small>';
         }
     }
 
     // Validation giờ đến
-    document.getElementById('gio-di').addEventListener('change', function() {
+    document.getElementById('gio-di').addEventListener('change', function () {
         document.getElementById('gio-den').min = this.value;
     });
 </script>

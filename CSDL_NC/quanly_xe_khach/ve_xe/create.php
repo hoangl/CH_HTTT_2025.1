@@ -37,7 +37,6 @@ try {
 }
 
 if ($_POST && !$error) {
-    $ma_ve = trim(strtoupper($_POST['ma_ve']));
     $ma_chuyen_xe = trim($_POST['ma_chuyen_xe']);
     $vi_tri = trim(strtoupper($_POST['vi_tri']));
     $ten_hanh_khach = trim($_POST['ten_hanh_khach']);

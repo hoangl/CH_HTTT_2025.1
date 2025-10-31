@@ -7,13 +7,13 @@
             <div class="col-md-6">
                 <p class="mb-0 text-muted">
                     <i class="fas fa-copyright me-1"></i>
-                    2025 Hệ thống quản lý xe khách
+                    2025 Hệ thống quản lý xe khách - Giảng viên: TS. Nguyễn Đình Hóa
                 </p>
             </div>
             <div class="col-md-6 text-md-end">
                 <p class="mb-0 text-muted">
                     <i class="fas fa-code me-1"></i>
-                    Phát triển bởi PHP thuần
+                    Phát triển bởi Nhóm 1 - Lớp M25CQHT01-B
                 </p>
             </div>
         </div>

@@ -64,6 +64,21 @@ try {
     $so_ghe_trong = $so_ghe_toi_da - $so_ve_ban;
     $ti_le_ban = $so_ghe_toi_da > 0 ? ($so_ve_ban / $so_ghe_toi_da) * 100 : 0;
 
+    // Lấy thông tin thù lao
+    $query_phan_cong = "SELECT pc.*, tx.HoTen, tx.SDT,
+                           CASE pc.VaiTro
+                               WHEN 1 THEN 'Tài xế chính'
+                               WHEN 2 THEN 'Lái phụ'
+                               ELSE 'Không xác định'
+                           END as TenVaiTro
+                    FROM phan_cong pc
+                    LEFT JOIN tai_xe tx ON pc.MaTaiXe = tx.MaTaiXe
+                    WHERE pc.MaChuyenXe = ?
+                    ORDER BY pc.VaiTro";
+    $stmt_phan_cong = $db->prepare($query_phan_cong);
+    $stmt_phan_cong->execute([$id]);
+    $phan_cong = $stmt_phan_cong->fetchAll(PDO::FETCH_ASSOC);
+
 } catch(PDOException $e) {
     $error = "Lỗi: " . $e->getMessage();
 }
@@ -106,7 +121,7 @@ include '../includes/header.php';
         <div class="row">
             <!-- Thông tin chuyến xe -->
             <div class="col-lg-4 mb-4">
-                <div class="card h-100 shadow-sm">
+                <div class="card mt-3 shadow-sm">
                     <div class="card-header">
                         <h5 class="mb-0">
                             <i class="fas fa-info-circle text-primary me-2"></i>Thông tin chuyến

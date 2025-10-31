@@ -79,10 +79,32 @@
                     <ul class="dropdown-menu">
                         <li><a class="dropdown-item" href="<?php echo isset($nav_path) ? $nav_path : '../'; ?>chuyen_xe/index.php">
                                 <i class="fas fa-road me-2"></i>Chuyến xe</a></li>
-                        <li><a class="dropdown-item" href="<?php echo isset($nav_path) ? $nav_path : '../'; ?>phan_cong/index.php">
-                                <i class="fas fa-users me-2"></i>Phân công</a></li>
                         <li><a class="dropdown-item" href="<?php echo isset($nav_path) ? $nav_path : '../'; ?>ve_xe/index.php">
                                 <i class="fas fa-ticket-alt me-2"></i>Vé xe</a></li>
+                    </ul>
+                </li>
+                <li class="nav-item dropdown">
+                    <a class="nav-link dropdown-toggle" href="#" id="reportsDropdown" role="button" data-bs-toggle="dropdown">
+                        <i class="fas fa-chart-bar"></i> Báo cáo
+                    </a>
+                    <ul class="dropdown-menu">
+                        <li><hr class="dropdown-divider"></li>
+                        <li><a class="dropdown-item" href="<?php echo isset($nav_path) ? $nav_path : '../'; ?>/reports/salary_report.php">
+                                <i class="fas fa-money-bill-wave me-2"></i>Lương tháng tài xế
+                            </a></li>
+                        <li><a class="dropdown-item" href="<?php echo isset($nav_path) ? $nav_path : '../'; ?>/reports/vehicle_revenue_report.php">
+                                <i class="fas fa-bus me-2"></i>Doanh thu theo xe
+                            </a></li>
+                        <li><a class="dropdown-item" href="<?php echo isset($nav_path) ? $nav_path : '../'; ?>/reports/route_revenue_report.php">
+                                <i class="fas fa-route me-2"></i>Doanh thu theo tuyến
+                            </a></li>
+                        <li><hr class="dropdown-divider"></li>
+                        <li><a class="dropdown-item" href="<?php echo isset($nav_path) ? $nav_path : '../'; ?>/reports/maintenance_report.php">
+                                <i class="fas fa-tools me-2"></i>Tình trạng bảo dưỡng
+                            </a></li>
+                        <li><a class="dropdown-item text-danger" href="<?php echo isset($nav_path) ? $nav_path : '../'; ?>/reports/overdue_maintenance.php">
+                                <i class="fas fa-exclamation-triangle me-2"></i>Xe quá hạn BD
+                            </a></li>
                     </ul>
                 </li>
             </ul>

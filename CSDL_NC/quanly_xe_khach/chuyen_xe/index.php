@@ -43,7 +43,6 @@ try {
                      xk.MaXe, lx.TenLoaiXe, lx.SoGhe,
                      COUNT(vx.MaVe) as SoVeDaBan,
                      (lx.SoGhe - 2) as SoGheToiDa,
-                     COUNT(pc.MaTaiXe) as SoTaiXe,
                      CASE cx.TrangThai 
                          WHEN 1 THEN 'Chờ khởi hành'
                          WHEN 2 THEN 'Hoàn thành'
@@ -60,7 +59,6 @@ try {
               LEFT JOIN xe_khach xk ON cx.MaXe = xk.MaXe
               LEFT JOIN loai_xe lx ON xk.MaLoaiXe = lx.MaLoaiXe
               LEFT JOIN ve_xe vx ON cx.MaChuyenXe = vx.MaChuyenXe
-              LEFT JOIN phan_cong pc ON cx.MaChuyenXe = pc.MaChuyenXe
               GROUP BY cx.MaChuyenXe
               ORDER BY cx.GioDi DESC";
     $stmt = $db->prepare($query);
@@ -160,7 +158,6 @@ include '../includes/header.php';
                                 <th width="15%">Xe</th>
                                 <th width="18%">Thời gian</th>
                                 <th width="10%">Vé bán</th>
-                                <th width="10%">Tài xế</th>
                                 <th width="10%">Tình trạng</th>
                                 <th width="5%">Thao tác</th>
                             </tr>
@@ -212,17 +209,6 @@ include '../includes/header.php';
                                         <div class="progress mt-1" style="height: 3px;">
                                             <div class="progress-bar" style="width: <?php echo $ti_le; ?>%"></div>
                                         </div>
-                                    </td>
-                                    <td>
-                                        <?php if ($chuyen['SoTaiXe'] > 0): ?>
-                                            <span class="badge bg-success small">
-                                            <i class="fas fa-user-check me-1"></i><?php echo $chuyen['SoTaiXe']; ?>
-                                        </span>
-                                        <?php else: ?>
-                                            <span class="badge bg-warning text-dark small">
-                                            <i class="fas fa-user-times me-1"></i>Chưa có
-                                        </span>
-                                        <?php endif; ?>
                                     </td>
                                     <td>
                                         <?php

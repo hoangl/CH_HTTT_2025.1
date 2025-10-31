@@ -177,9 +177,10 @@ include 'includes/header.php';
                 </div>
                 <h5 class="card-title">Quản lý chuyến</h5>
                 <p class="card-text text-muted">Lập lịch chuyến xe và phân công tài xế</p>
-                <div class="d-grid gap-2">
-                    <a href="chuyen_xe/index.php" class="btn btn-outline-warning btn-sm">Chuyến xe</a>
-                    <a href="phan_cong/index.php" class="btn btn-outline-warning btn-sm">Phân công</a>
+                <div class="d-grid">
+                    <a href="chuyen_xe/index.php" class="btn btn-info">
+                        <i class="fas fa-bus me-2"></i>Chuyến xe & Phân công
+                    </a>
                 </div>
             </div>
         </div>
@@ -195,7 +196,7 @@ include 'includes/header.php';
                 <p class="card-text text-muted">Quản lý vé xe và thông tin hành khách</p>
                 <div class="d-grid">
                     <a href="ve_xe/index.php" class="btn btn-danger">
-                        <i class="fas fa-plus me-2"></i>Quản lý vé
+                        <i class="fas fa-ticket me-2"></i>Quản lý vé
                     </a>
                 </div>
             </div>

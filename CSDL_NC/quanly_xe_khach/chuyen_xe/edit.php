@@ -45,7 +45,7 @@ try {
     $stmt_xe->execute([$chuyen_xe['MaXe']]);
     $xe_khach_list = $stmt_xe->fetchAll(PDO::FETCH_ASSOC);
 
-} catch(PDOException $e) {
+} catch (PDOException $e) {
     $error = "Lỗi: " . $e->getMessage();
 }
 
@@ -54,11 +54,14 @@ if ($_POST && !$error) {
     $ma_xe = trim($_POST['ma_xe']);
     $gio_di = $_POST['gio_di'];
     $gio_den = $_POST['gio_den'];
-    $trang_thai = intval($_POST['trang_thai']);
+    $tai_xe_chinh = trim($_POST['tai_xe_chinh']);
+    $lai_phu = trim($_POST['lai_phu']);
 
     // Validation
-    if (empty($ma_xe) || empty($gio_di) || empty($gio_den)) {
+    if (empty($ma_xe) || empty($gio_di) || empty($gio_den) || empty($tai_xe_chinh) || empty($lai_phu)) {
         $error = "Vui lòng điền đầy đủ thông tin!";
+    } elseif ($tai_xe_chinh == $lai_phu) {
+        $error = "Lái chính phải khác lái phụ!";
     } elseif (strtotime($gio_den) <= strtotime($gio_di)) {
         $error = "Giờ đến phải sau giờ khởi hành!";
     } else {
@@ -97,21 +100,31 @@ if ($_POST && !$error) {
                     if ($conflict_stmt->fetchColumn() > 0) {
                         $error = "Xe này đã có lịch trình trùng với thời gian đã chọn!";
                     } else {
-                        $query = "UPDATE chuyen_xe SET MaXe = ?, GioDi = ?, GioDen = ?, TrangThai = ? WHERE MaChuyenXe = ?";
+                        $query = "UPDATE chuyen_xe SET MaXe = ?, GioDi = ?, GioDen = ? WHERE MaChuyenXe = ?";
                         $stmt = $db->prepare($query);
 
-                        if ($stmt->execute([$ma_xe, $gio_di, $gio_den, $trang_thai, $id])) {
+                        if ($stmt->execute([$ma_xe, $gio_di, $gio_den, $id])) {
                             $success = "Cập nhật chuyến xe thành công!";
                             // Cập nhật lại thông tin hiển thị
                             $chuyen_xe['MaXe'] = $ma_xe;
                             $chuyen_xe['GioDi'] = $gio_di;
                             $chuyen_xe['GioDen'] = $gio_den;
-                            $chuyen_xe['TrangThai'] = $trang_thai;
                         } else {
                             $error = "Có lỗi xảy ra khi cập nhật chuyến xe!";
                         }
+                        // Xóa phân công cũ
+                        $delete_query = "DELETE FROM phan_cong WHERE MaChuyenXe = ?";
+                        $delete_stmt = $db->prepare($delete_query);
+                        $delete_stmt->execute([$id]);
+                        // Thêm phân công mới
+                        $insert_query = "INSERT INTO phan_cong (MaChuyenXe, MaTaiXe, VaiTro, ThuLao) VALUES (?, ?, ?, 0)";
+                        $insert_stmt = $db->prepare($insert_query);
+                        // Tài xế chính
+                        $insert_stmt->execute([$id, $tai_xe_chinh, 1]);
+                        // Lái phụ
+                        $insert_stmt->execute([$id, $lai_phu, 2]);
                     }
-                } catch(PDOException $e) {
+                } catch (PDOException $e) {
                     $error = "Lỗi: " . $e->getMessage();
                 }
             }
@@ -214,9 +227,9 @@ include '../includes/header.php';
                                     <option value="">-- Chọn xe khách --</option>
                                     <?php foreach ($xe_khach_list as $xe): ?>
                                         <option value="<?php echo $xe['MaXe']; ?>"
-                                            <?php echo (isset($_POST['ma_xe']) ?
-                                                ($_POST['ma_xe'] == $xe['MaXe'] ? 'selected' : '') :
-                                                ($chuyen_xe['MaXe'] == $xe['MaXe'] ? 'selected' : '')); ?>>
+                                                <?php echo(isset($_POST['ma_xe']) ?
+                                                        ($_POST['ma_xe'] == $xe['MaXe'] ? 'selected' : '') :
+                                                        ($chuyen_xe['MaXe'] == $xe['MaXe'] ? 'selected' : '')); ?>>
                                             <?php echo htmlspecialchars($xe['MaXe'] . ' - ' . $xe['TenLoaiXe'] . ' (' . $xe['SoGhe'] . ' ghế)'); ?>
                                         </option>
                                     <?php endforeach; ?>
@@ -230,14 +243,14 @@ include '../includes/header.php';
                                     <i class="fas fa-toggle-on me-1"></i>Trạng thái <span class="text-danger">*</span>
                                 </label>
                                 <select class="form-select" name="trang_thai" required>
-                                    <option value="1" <?php echo (isset($_POST['trang_thai']) ?
-                                        ($_POST['trang_thai'] == 1 ? 'selected' : '') :
-                                        ($chuyen_xe['TrangThai'] == 1 ? 'selected' : '')); ?>>
+                                    <option value="1" <?php echo(isset($_POST['trang_thai']) ?
+                                            ($_POST['trang_thai'] == 1 ? 'selected' : '') :
+                                            ($chuyen_xe['TrangThai'] == 1 ? 'selected' : '')); ?>>
                                         Chờ khởi hành
                                     </option>
-                                    <option value="2" <?php echo (isset($_POST['trang_thai']) ?
-                                        ($_POST['trang_thai'] == 2 ? 'selected' : '') :
-                                        ($chuyen_xe['TrangThai'] == 2 ? 'selected' : '')); ?>>
+                                    <option value="2" <?php echo(isset($_POST['trang_thai']) ?
+                                            ($_POST['trang_thai'] == 2 ? 'selected' : '') :
+                                            ($chuyen_xe['TrangThai'] == 2 ? 'selected' : '')); ?>>
                                         Hoàn thành
                                     </option>
                                 </select>
@@ -248,7 +261,8 @@ include '../includes/header.php';
                         <div class="row">
                             <div class="col-md-6 mb-3">
                                 <label class="form-label">
-                                    <i class="fas fa-play me-1 text-success"></i>Giờ khởi hành <span class="text-danger">*</span>
+                                    <i class="fas fa-play me-1 text-success"></i>Giờ khởi hành <span
+                                            class="text-danger">*</span>
                                 </label>
                                 <input type="datetime-local"
                                        class="form-control"
@@ -261,7 +275,8 @@ include '../includes/header.php';
 
                             <div class="col-md-6 mb-3">
                                 <label class="form-label">
-                                    <i class="fas fa-stop me-1 text-danger"></i>Giờ đến dự kiến <span class="text-danger">*</span>
+                                    <i class="fas fa-stop me-1 text-danger"></i>Giờ đến dự kiến <span
+                                            class="text-danger">*</span>
                                 </label>
                                 <input type="datetime-local"
                                        class="form-control"
@@ -284,8 +299,10 @@ include '../includes/header.php';
                                         <div class="col-md-6">
                                             <strong>Thời gian hiện tại:</strong><br>
                                             <small class="text-muted">
-                                                <strong>Đi:</strong> <?php echo date('d/m/Y H:i', strtotime($chuyen_xe['GioDi'])); ?><br>
-                                                <strong>Đến:</strong> <?php echo date('d/m/Y H:i', strtotime($chuyen_xe['GioDen'])); ?><br>
+                                                <strong>Đi:</strong> <?php echo date('d/m/Y H:i', strtotime($chuyen_xe['GioDi'])); ?>
+                                                <br>
+                                                <strong>Đến:</strong> <?php echo date('d/m/Y H:i', strtotime($chuyen_xe['GioDen'])); ?>
+                                                <br>
                                                 <strong>Thời lượng:</strong>
                                                 <?php
                                                 $current_duration = (strtotime($chuyen_xe['GioDen']) - strtotime($chuyen_xe['GioDi'])) / 3600;
@@ -363,7 +380,7 @@ include '../includes/header.php';
         }
     }
 
-    document.getElementById('gio-di').addEventListener('change', function() {
+    document.getElementById('gio-di').addEventListener('change', function () {
         document.getElementById('gio-den').min = this.value;
         updateScheduleComparison();
     });
