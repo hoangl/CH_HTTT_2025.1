@@ -1,0 +1,20 @@
+/* src/pages/Home/Home.css */
+.home-container {
+    padding: 24px;
+    max-width: 1200px;
+    margin: 0 auto;
+}
+
+/* Nếu bạn dùng Grid của MUI thì nó tự nhận Theme. 
+   Nếu bạn dùng thẻ div thường thì thêm CSS dưới đây: */
+
+.product-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 24px;
+}
+
+img {
+    max-width: 100%;
+    display: block;
+}
